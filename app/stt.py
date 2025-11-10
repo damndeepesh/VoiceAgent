@@ -36,11 +36,27 @@ def download_file(url: str) -> str:
 
 
 def transcribe_file(local_path: str, language: Optional[str] = "hi") -> str:
+	import logging
+	logger = logging.getLogger(__name__)
 	try:
+		# Check if file exists and has content
+		if not os.path.exists(local_path):
+			logger.error(f"Audio file not found: {local_path}")
+			return ""
+		file_size = os.path.getsize(local_path)
+		if file_size == 0:
+			logger.error(f"Audio file is empty: {local_path}")
+			return ""
+		logger.info(f"Transcribing {local_path} ({file_size} bytes, language={language})")
 		model = _get_model()
 		segments, info = model.transcribe(local_path, language=language, beam_size=1)
 		text_parts = [seg.text for seg in segments]
-		return " ".join([t.strip() for t in text_parts if t]).strip()
+		result = " ".join([t.strip() for t in text_parts if t]).strip()
+		logger.info(f"Transcription result: '{result}' ({len(result)} chars)")
+		return result
+	except Exception as e:
+		logger.error(f"STT failed for {local_path}: {e}", exc_info=True)
+		return ""
 	finally:
 		try:
 			os.remove(local_path)

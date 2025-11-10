@@ -65,6 +65,9 @@ async def synthesize_elevenlabs(text: str, voice_id: str | None = None) -> str:
 
 
 async def synthesize(text: str) -> str:
+	import logging
+	logger = logging.getLogger(__name__)
+	logger.info(f"synthesize() called with provider={settings.tts_provider}, elevenlabs_key={'set' if settings.elevenlabs_api_key else 'missing'}")
 	if settings.tts_provider == "elevenlabs":
 		return await synthesize_elevenlabs(text)
 	return await synthesize_edge(text)

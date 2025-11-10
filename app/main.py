@@ -317,13 +317,19 @@ async def direct_stream(ws: WebSocket):
 					continue
 				# Transcribe this small chunk
 				data = base64.b64decode(b64)
+				if len(data) < 100:  # Skip tiny chunks
+					continue
 				with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tf:
 					tf.write(data)
 					tmp_path = tf.name
 				try:
 					from .stt import transcribe_file  # lazy import
+					import logging
+					logging.getLogger(__name__).debug(f"Transcribing chunk: {len(data)} bytes")
 					text = transcribe_file(tmp_path, language=lang)
-				except Exception:
+				except Exception as e:
+					import logging
+					logging.getLogger(__name__).error(f"STT chunk error: {e}")
 					text = ""
 				finally:
 					try:
@@ -340,6 +346,8 @@ async def direct_stream(ws: WebSocket):
 				all_text = " ".join(_session_partials.get(session_id, []))[:1000].strip()
 				_session_partials[session_id] = []
 				if not all_text:
+					import logging
+					logging.getLogger(__name__).warning(f"No speech detected for session {session_id}. Partial chunks: {len(_session_partials.get(session_id, []))}")
 					await ws.send_json({"type": "info", "message": "no_speech"})
 					continue
 				await ws.send_json({"type": "info", "message": "processing"})
