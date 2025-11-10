@@ -276,8 +276,13 @@ async def direct_stt_llm_tts(
 
 		# TTS
 		try:
+			import logging
+			logger = logging.getLogger(__name__)
+			logger.info(f"TTS provider: {settings.tts_provider}, generating audio for: {reply_text[:50]}...")
 			audio_path = await synthesize(reply_text)
 		except Exception as exc:
+			import logging
+			logging.getLogger(__name__).error(f"TTS failed, using text fallback: {exc}")
 			# Fallback to returning text so the client can use Web Speech API
 			return JSONResponse({"text": reply_text, "note": "tts_failed"}, status_code=200)
 		return FileResponse(audio_path, media_type="audio/mpeg")
@@ -348,10 +353,15 @@ async def direct_stream(ws: WebSocket):
 				append_message(session_id, "assistant", reply_text)
 				# TTS or text fallback
 				try:
+					import logging
+					logger = logging.getLogger(__name__)
+					logger.info(f"TTS provider: {settings.tts_provider}, generating audio for: {reply_text[:50]}...")
 					audio_path = await synthesize(reply_text)
 					filename = os.path.basename(audio_path)
 					await ws.send_json({"type": "reply_audio_url", "url": f"/media/{filename}", "text": reply_text})
-				except Exception:
+				except Exception as e:
+					import logging
+					logging.getLogger(__name__).error(f"TTS failed, using text fallback: {e}")
 					await ws.send_json({"type": "reply_text", "text": reply_text})
 			elif mtype == "stop":
 				break

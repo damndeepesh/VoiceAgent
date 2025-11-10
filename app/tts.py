@@ -25,7 +25,7 @@ async def synthesize_edge(text: str, voice: str | None = None) -> str:
 	return out_path
 
 
-def synthesize_elevenlabs(text: str, voice_id: str | None = None) -> str:
+async def synthesize_elevenlabs(text: str, voice_id: str | None = None) -> str:
 	if not settings.elevenlabs_api_key:
 		raise RuntimeError("ELEVENLABS_API_KEY not configured")
 	voice = voice_id or settings.elevenlabs_voice_id
@@ -40,19 +40,33 @@ def synthesize_elevenlabs(text: str, voice_id: str | None = None) -> str:
 		"model_id": "eleven_monolingual_v1",
 		"voice_settings": {"stability": 0.5, "similarity_boost": 0.6},
 	}
-	resp = requests.post(url, json=data, headers=headers, timeout=60)
-	resp.raise_for_status()
+	# Use async HTTP client to avoid blocking
+	import aiohttp
+	import logging
+	logger = logging.getLogger(__name__)
+	try:
+		async with aiohttp.ClientSession() as session:
+			async with session.post(url, json=data, headers=headers, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+				if resp.status != 200:
+					error_text = await resp.text()
+					logger.error(f"ElevenLabs API error {resp.status}: {error_text}")
+					raise RuntimeError(f"ElevenLabs API returned {resp.status}: {error_text}")
+				audio_data = await resp.read()
+	except Exception as e:
+		logger.error(f"ElevenLabs synthesis failed: {e}")
+		raise
 	filename = f"{uuid.uuid4().hex}.mp3"
 	os.makedirs(settings.media_dir, exist_ok=True)
 	out_path = os.path.join(settings.media_dir, filename)
 	with open(out_path, "wb") as f:
-		f.write(resp.content)
+		f.write(audio_data)
+	logger.info(f"ElevenLabs TTS generated: {filename} ({len(audio_data)} bytes)")
 	return out_path
 
 
 async def synthesize(text: str) -> str:
 	if settings.tts_provider == "elevenlabs":
-		return synthesize_elevenlabs(text)
+		return await synthesize_elevenlabs(text)
 	return await synthesize_edge(text)
 
 
