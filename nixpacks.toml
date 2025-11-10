@@ -1,0 +1,9 @@
+#[build]
+# Add required system packages for audio processing (faster-whisper needs ffmpeg)
+
+[phases.setup]
+nixPkgs = ["ffmpeg", "sox", "bash", "coreutils"]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+
