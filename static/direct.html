@@ -42,8 +42,11 @@
   </div>
 
   <div class="controls">
-    <button id="record-btn">Hold to Talk</button>
+    <button id="toggle-btn">Start Conversation</button>
     <button id="stop-btn" class="alt" disabled>Stop</button>
+    <button id="rt-start" class="alt">Start Realtime (beta)</button>
+    <button id="rt-flush" class="alt" disabled>Send</button>
+    <button id="rt-stop" class="alt" disabled>Stop Realtime</button>
   </div>
 
   <div class="row">
@@ -60,14 +63,24 @@
   <script>
     const statusEl = document.getElementById('status');
     const blobEl = document.getElementById('blob');
-    const recBtn = document.getElementById('record-btn');
+    const toggleBtn = document.getElementById('toggle-btn');
     const stopBtn = document.getElementById('stop-btn');
+    const rtStartBtn = document.getElementById('rt-start');
+    const rtFlushBtn = document.getElementById('rt-flush');
+    const rtStopBtn = document.getElementById('rt-stop');
     const player = document.getElementById('player');
     const sessionInput = document.getElementById('session');
     const langSel = document.getElementById('lang');
 
     let mediaRecorder = null;
     let chunks = [];
+    let conversationActive = false;
+    let recordingTimer = null;
+    const CHUNK_MS = 4000; // record in ~4s chunks for turn-taking
+    // Realtime WS
+    let ws = null;
+    let rtRecorder = null;
+    let rtStream = null;
 
     function log(msg) { statusEl.textContent = msg; }
 
@@ -94,9 +107,15 @@
         };
         mediaRecorder.start();
         blobEl.classList.add('listening');
-        recBtn.disabled = true;
         stopBtn.disabled = false;
-        log('Listening… release to process.');
+        log('Listening…');
+        // Auto-stop after CHUNK_MS to simulate a turn
+        clearTimeout(recordingTimer);
+        recordingTimer = setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+          }
+        }, CHUNK_MS);
       } catch (err) {
         log('Microphone error: ' + err.message);
       }
@@ -106,7 +125,6 @@
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop();
         blobEl.classList.remove('listening');
-        recBtn.disabled = false;
         stopBtn.disabled = true;
         log('Processing…');
       }
@@ -124,20 +142,137 @@
           log('Server error: ' + txt);
           return;
         }
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await resp.json();
+          if (data.text) {
+            log('Reply (browser TTS fallback).');
+            speakLocally(data.text);
+          } else {
+            log('Received empty JSON response.');
+          }
+          return;
+        }
         const audioBlob = await resp.blob();
         player.src = URL.createObjectURL(audioBlob);
-        player.play().catch(() => {});
         log('Reply playing.');
+        // Pause conversation recording during playback to avoid feedback
+        player.onended = () => {
+          if (conversationActive) {
+            // start next user turn automatically
+            startRecording();
+          } else {
+            log('Idle.');
+          }
+        };
+        await player.play().catch(() => {});
       } catch (err) {
         log('Failed to process: ' + err.message);
       }
     }
 
-    recBtn.addEventListener('mousedown', startRecording);
-    recBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); }, { passive: false });
+    function speakLocally(text) {
+      if (!window.speechSynthesis) {
+        log('Browser TTS not supported.');
+        return;
+      }
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.lang = langSel.value === 'hi' ? 'hi-IN' : 'en-IN';
+      speechSynthesis.cancel();
+      speechSynthesis.speak(utt);
+    }
 
     stopBtn.addEventListener('mouseup', stopRecording);
     stopBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); }, { passive: false });
+
+    // Toggle continuous to-and-fro loop
+    toggleBtn.addEventListener('click', async () => {
+      conversationActive = !conversationActive;
+      toggleBtn.textContent = conversationActive ? 'Stop Conversation' : 'Start Conversation';
+      if (conversationActive) {
+        log('Conversation started. Listening…');
+        await startRecording();
+      } else {
+        clearTimeout(recordingTimer);
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+        }
+        try { player.pause(); } catch {}
+        blobEl.classList.remove('listening');
+        log('Conversation stopped.');
+      }
+    });
+
+    // Realtime beta using MediaRecorder timeslices over WebSocket
+    async function startRealtime() {
+      try {
+        ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/direct/stream');
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'start', session: ensureSession(), lang: langSel.value }));
+          log('Realtime connected. Speak freely, then press Send to get a reply.');
+          rtStartBtn.disabled = true;
+          rtFlushBtn.disabled = false;
+          rtStopBtn.disabled = false;
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data);
+            if (msg.type === 'partial') {
+              // Optionally show partials
+              // log('Partial: ' + msg.text);
+            } else if (msg.type === 'reply_audio_url') {
+              player.src = msg.url;
+              player.play().catch(()=>{});
+              log('Reply playing.');
+            } else if (msg.type === 'reply_text') {
+              speakLocally(msg.text);
+              log('Reply (browser TTS).');
+            }
+          } catch {}
+        };
+        ws.onclose = () => {
+          rtStartBtn.disabled = false;
+          rtFlushBtn.disabled = true;
+          rtStopBtn.disabled = true;
+          log('Realtime disconnected.');
+        };
+        rtStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        rtRecorder = new MediaRecorder(rtStream, { mimeType: 'audio/webm' });
+        rtRecorder.ondataavailable = async (e) => {
+          if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+            const buf = await e.data.arrayBuffer();
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+            ws.send(JSON.stringify({ type: 'audio', b64 }));
+          }
+        };
+        rtRecorder.start(1000); // send ~1s chunks
+      } catch (err) {
+        log('Realtime error: ' + err.message);
+      }
+    }
+    function flushRealtime() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'flush' }));
+        log('Thinking…');
+      }
+    }
+    function stopRealtime() {
+      try {
+        if (rtRecorder && rtRecorder.state !== 'inactive') rtRecorder.stop();
+      } catch {}
+      try {
+        if (rtStream) rtStream.getTracks().forEach(t => t.stop());
+      } catch {}
+      try {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
+      } catch {}
+      try {
+        if (ws) ws.close();
+      } catch {}
+    }
+    rtStartBtn.addEventListener('click', startRealtime);
+    rtFlushBtn.addEventListener('click', flushRealtime);
+    rtStopBtn.addEventListener('click', stopRealtime);
   </script>
 </body>
 </html>

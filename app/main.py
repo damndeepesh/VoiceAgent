@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles  # pyright: ignore[reportMissingImpo
 from twilio.twiml.voice_response import VoiceResponse, Say, Record, Play, Redirect  # pyright: ignore[reportMissingImports]
 from twilio.jwt.access_token import AccessToken  # pyright: ignore[reportMissingImports]
 from twilio.jwt.access_token.grants import VoiceGrant  # pyright: ignore[reportMissingImports]
+import base64
+import tempfile
 
 from .config import get_settings
 from .stt import transcribe_from_url
@@ -273,11 +275,92 @@ async def direct_stt_llm_tts(
 		append_message(session, "assistant", reply_text)
 
 		# TTS
-		audio_path = await synthesize(reply_text)
+		try:
+			audio_path = await synthesize(reply_text)
+		except Exception as exc:
+			# Fallback to returning text so the client can use Web Speech API
+			return JSONResponse({"text": reply_text, "note": "tts_failed"}, status_code=200)
 		return FileResponse(audio_path, media_type="audio/mpeg")
 	finally:
 		try:
 			os.remove(tmp_path)
+		except Exception:
+			pass
+
+
+# Realtime direct streaming (beta)
+_session_partials: dict[str, list[str]] = {}
+
+
+@app.websocket("/direct/stream")
+async def direct_stream(ws: WebSocket):
+	await ws.accept()
+	session_id: str | None = None
+	lang = "hi"
+	try:
+		while True:
+			msg = await ws.receive_json()
+			mtype = msg.get("type")
+			if mtype == "start":
+				session_id = msg.get("session") or f"ws-{uuid.uuid4().hex}"
+				lang = msg.get("lang") or "hi"
+				_session_partials[session_id] = []
+				await ws.send_json({"type": "ready", "session": session_id})
+			elif mtype == "audio":
+				b64 = msg.get("b64")
+				if not b64:
+					continue
+				# Transcribe this small chunk
+				data = base64.b64decode(b64)
+				with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tf:
+					tf.write(data)
+					tmp_path = tf.name
+				try:
+					from .stt import transcribe_file  # lazy import
+					text = transcribe_file(tmp_path, language=lang)
+				except Exception:
+					text = ""
+				finally:
+					try:
+						os.remove(tmp_path)
+					except Exception:
+						pass
+				if text:
+					if session_id:
+						_session_partials.setdefault(session_id, []).append(text)
+					await ws.send_json({"type": "partial", "text": text})
+			elif mtype == "flush":
+				if not session_id:
+					continue
+				all_text = " ".join(_session_partials.get(session_id, []))[:1000].strip()
+				_session_partials[session_id] = []
+				if not all_text:
+					await ws.send_json({"type": "info", "message": "no_speech"})
+					continue
+				# Build response with memory
+				history = load_history(session_id)
+				append_message(session_id, "user", all_text)
+				try:
+					reply_text = generate_response(history + [{"role": "user", "content": all_text}])
+				except Exception:
+					reply_text = "Namaste! Thodi der baad phir se koshish karte hain."
+				append_message(session_id, "assistant", reply_text)
+				# TTS or text fallback
+				try:
+					audio_path = await synthesize(reply_text)
+					filename = os.path.basename(audio_path)
+					await ws.send_json({"type": "reply_audio_url", "url": f"/media/{filename}", "text": reply_text})
+				except Exception:
+					await ws.send_json({"type": "reply_text", "text": reply_text})
+			elif mtype == "stop":
+				break
+	except WebSocketDisconnect:
+		pass
+	finally:
+		if session_id and session_id in _session_partials:
+			_session_partials.pop(session_id, None)
+		try:
+			await ws.close()
 		except Exception:
 			pass
 

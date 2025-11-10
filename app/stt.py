@@ -3,8 +3,8 @@ import tempfile
 import uuid
 from typing import Optional
 
-import requests
-from faster_whisper import WhisperModel
+import requests  # pyright: ignore[reportMissingImports]
+from faster_whisper import WhisperModel  # pyright: ignore[reportMissingImports]
 
 from .config import get_settings
 
