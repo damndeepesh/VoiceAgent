@@ -10,6 +10,9 @@ User calls → Twilio → FastAPI (Railway) → faster-whisper (STT) → Gemini/
 
 - `POST /voice`: Twilio webhook for incoming/continued calls. Returns TwiML asking the caller to speak.
 - `POST /process-recording`: Receives Twilio recording, runs STT, LLM, TTS, plays result, then loops.
+- `POST /client-voice`: TwiML endpoint for Twilio Client (browser) calls, dials the PSTN number supplied in the request.
+- `GET /client-token`: Issues a Twilio Access Token for the browser client.
+- `GET /client`: Minimal browser UI to place a call via Twilio Client (uses `/client-token`).
 - `GET /media/{filename}`: Serves synthesized audio files for Twilio `<Play>`.
 - `GET /health`: Healthcheck for Railway.
 
@@ -19,6 +22,10 @@ Set these in Railway Variables:
 
 - PUBLIC_URL: e.g. https://your-service.up.railway.app
 - TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER
+- TWILIO_VALIDATE (true/false), TWILIO_USE_STREAMING (false by default)
+- TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET (for browser client tokens)
+- TWILIO_TWIML_APP_SID (Voice app that points to `/client-voice`)
+- TWILIO_CLIENT_IDENTITY (optional default identity for browser client)
 - LLM_PROVIDER: gemini | grok
 - GEMINI_API_KEY, GEMINI_MODEL (gemini-1.5-flash)
 - GROK_API_KEY, GROK_MODEL (optional alternative)
@@ -53,6 +60,13 @@ Note: Nixpacks installs `ffmpeg` via `nixpacks.toml` for faster-whisper.
 1. Buy a Twilio number.
 2. Set Voice webhook (HTTP POST) for the number to: `https://YOUR_PUBLIC_URL/voice`
 3. Ensure `PUBLIC_URL` matches the deployed Railway URL so TwiML `<Play>` URLs resolve.
+
+### Twilio Client (Browser) Calls
+
+1. Create a TwiML App in the Twilio Console. Set the Voice Request URL to: `https://YOUR_PUBLIC_URL/client-voice`
+2. Generate a Twilio API Key & Secret (type: Standard) and add them to Railway as `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`
+3. Set `TWILIO_TWIML_APP_SID` to the SID of the TwiML App you created
+4. Visit `https://YOUR_PUBLIC_URL/client` in your browser, allow microphone access, enter the destination number (e.g. `+91...`), and click **Call**
 
 ## Costs and Choices
 

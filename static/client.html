@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Riverwood Voice Agent - Browser Call</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://sdk.twilio.com" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px auto;
+      max-width: 480px;
+      color: #1f2933;
+    }
+    h1 {
+      font-size: 1.8rem;
+    }
+    label {
+      display: block;
+      margin: 16px 0 6px;
+      font-weight: 600;
+    }
+    input {
+      width: 100%;
+      padding: 10px;
+      font-size: 1rem;
+      box-sizing: border-box;
+      border: 1px solid #cbd2d9;
+      border-radius: 6px;
+    }
+    button {
+      margin-top: 20px;
+      width: 48%;
+      padding: 12px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #fff;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #call-btn {
+      background-color: #2563eb;
+      margin-right: 4%;
+    }
+    #hangup-btn {
+      background-color: #ef4444;
+    }
+    #status {
+      margin-top: 24px;
+      padding: 12px;
+      background-color: #f5f7fa;
+      border-radius: 6px;
+      min-height: 80px;
+      white-space: pre-wrap;
+    }
+    footer {
+      margin-top: 40px;
+      font-size: 0.85rem;
+      color: #52606d;
+    }
+  </style>
+</head>
+<body>
+  <h1>Riverwood Voice Agent (Browser Call)</h1>
+  <p>
+    Use this page to place a browser-based call through Twilio Client.
+    Enter an E.164 formatted phone number (e.g. +919876543210) and click <strong>Call</strong>.
+  </p>
+  <label for="identity">Identity (optional)</label>
+  <input id="identity" type="text" placeholder="riverwood-demo-user" />
+
+  <label for="phone-number">Destination Number</label>
+  <input id="phone-number" type="tel" placeholder="+919876543210" />
+
+  <div style="display:flex; justify-content:space-between;">
+    <button id="call-btn">Call</button>
+    <button id="hangup-btn" disabled>Hang Up</button>
+  </div>
+
+  <div id="status">Loading Twilio Device...</div>
+
+  <footer>
+    <p>
+      Ensure your Twilio API Key/Secret and TwiML App SID are configured in Railway.<br />
+      TwiML App Voice URL should point to <code>/client-voice</code>.
+    </p>
+  </footer>
+
+  <script src="https://sdk.twilio.com/js/client/v1.15/twilio.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const callBtn = document.getElementById('call-btn');
+    const hangupBtn = document.getElementById('hangup-btn');
+    const phoneInput = document.getElementById('phone-number');
+    const identityInput = document.getElementById('identity');
+
+    let device = null;
+    let activeConnection = null;
+
+    function log(message) {
+      statusEl.textContent = message;
+    }
+
+    async function setupDevice() {
+      try {
+        const identity = identityInput.value.trim() || undefined;
+        const tokenResp = await fetch(`/client-token${identity ? `?identity=${encodeURIComponent(identity)}` : ''}`);
+        const tokenData = await tokenResp.json();
+        if (!tokenResp.ok) {
+          log(`Token error: ${tokenData.error || 'Unknown error'}`);
+          return;
+        }
+        log('Initializing Twilio Device...');
+        device = new Twilio.Device(tokenData.token, { debug: true });
+
+        device.on('ready', () => log('Device ready. Enter a number and click Call.'));
+        device.on('error', (error) => log(`Twilio Device error: ${error.message}`));
+        device.on('connect', (conn) => {
+          activeConnection = conn;
+          log(`Call connected with ${phoneInput.value}`);
+          callBtn.disabled = true;
+          hangupBtn.disabled = false;
+        });
+        device.on('disconnect', () => {
+          activeConnection = null;
+          log('Call ended.');
+          callBtn.disabled = false;
+          hangupBtn.disabled = true;
+        });
+      } catch (err) {
+        log(`Failed to initialize Twilio Device: ${err.message}`);
+      }
+    }
+
+    callBtn.addEventListener('click', () => {
+      if (!device) {
+        log('Device not ready yet. Please wait.');
+        return;
+      }
+      const number = phoneInput.value.trim();
+      if (!number) {
+        log('Please enter a destination number in E.164 format.');
+        return;
+      }
+      log(`Calling ${number}...`);
+      device.connect({ params: { To: number } });
+    });
+
+    hangupBtn.addEventListener('click', () => {
+      if (activeConnection) {
+        activeConnection.disconnect();
+      }
+    });
+
+    window.addEventListener('load', setupDevice);
+  </script>
+</body>
+</html>
+

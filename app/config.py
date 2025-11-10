@@ -12,6 +12,10 @@ class Settings:
 	twilio_number: str | None = os.getenv("TWILIO_NUMBER")
 	twilio_validate_signatures: bool = os.getenv("TWILIO_VALIDATE", "true").lower() == "true"
 	twilio_use_streaming: bool = os.getenv("TWILIO_USE_STREAMING", "false").lower() == "true"
+	twilio_api_key_sid: str | None = os.getenv("TWILIO_API_KEY_SID")
+	twilio_api_key_secret: str | None = os.getenv("TWILIO_API_KEY_SECRET")
+	twilio_twiml_app_sid: str | None = os.getenv("TWILIO_TWIML_APP_SID")
+	twilio_client_identity: str = os.getenv("TWILIO_CLIENT_IDENTITY", "riverwood-agent")
 
 	# STT
 	whisper_model: str = os.getenv("WHISPER_MODEL", "small")
