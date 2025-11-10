@@ -3,13 +3,13 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse, FileResponse, JSONResponse, HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from twilio.twiml.voice_response import VoiceResponse, Say, Record, Play, Redirect
-from twilio.jwt.access_token import AccessToken
-from twilio.jwt.access_token.grants import VoiceGrant
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile, File, Form  # pyright: ignore[reportMissingImports]
+from fastapi.responses import PlainTextResponse, FileResponse, JSONResponse, HTMLResponse  # pyright: ignore[reportMissingImports]
+from fastapi.middleware.cors import CORSMiddleware  # pyright: ignore[reportMissingImports]
+from fastapi.staticfiles import StaticFiles  # pyright: ignore[reportMissingImports]
+from twilio.twiml.voice_response import VoiceResponse, Say, Record, Play, Redirect  # pyright: ignore[reportMissingImports]
+from twilio.jwt.access_token import AccessToken  # pyright: ignore[reportMissingImports]
+from twilio.jwt.access_token.grants import VoiceGrant  # pyright: ignore[reportMissingImports]
 
 from .config import get_settings
 from .stt import transcribe_from_url
@@ -36,6 +36,7 @@ static_dir = Path(__file__).resolve().parent.parent / "static"
 if static_dir.exists():
 	app.mount("/static", StaticFiles(directory=static_dir), name="static")
 CLIENT_PAGE = static_dir / "client.html"
+DIRECT_PAGE = static_dir / "direct.html"
 
 
 @app.get("/health")
@@ -227,5 +228,56 @@ async def client_token(identity: Optional[str] = None):
 	jwt = token.to_jwt()
 	jwt_str = jwt.decode("utf-8") if isinstance(jwt, bytes) else jwt
 	return {"token": jwt_str, "identity": identity_to_use}
+
+
+@app.get("/direct", response_class=HTMLResponse, include_in_schema=False)
+async def direct_page():
+	if DIRECT_PAGE.exists():
+		return HTMLResponse(DIRECT_PAGE.read_text(encoding="utf-8"))
+	return HTMLResponse("<h1>Direct voice page not found</h1>", status_code=404)
+
+
+@app.post("/direct/stt-llm-tts")
+async def direct_stt_llm_tts(
+	audio: UploadFile = File(...),
+	session: str = Form(default="web-" + uuid.uuid4().hex),
+	lang: str = Form(default="hi"),
+):
+	# Save uploaded audio to temp file
+	tmp_dir = os.path.join(settings.media_dir, "tmp")
+	os.makedirs(tmp_dir, exist_ok=True)
+	tmp_path = os.path.join(tmp_dir, f"upl_{uuid.uuid4().hex}.webm")
+	with open(tmp_path, "wb") as f:
+		f.write(await audio.read())
+
+	try:
+		# Transcribe
+		# Note: faster-whisper supports multiple formats; webm/ogg should work if ffmpeg is available
+		user_text = ""
+		try:
+			user_text = transcribe_from_url(f"file://{tmp_path}", language=lang)
+		except Exception:
+			user_text = ""
+
+		if not user_text:
+			return JSONResponse({"error": "No speech detected"}, status_code=400)
+
+		# Memory + LLM
+		history = load_history(session)
+		append_message(session, "user", user_text)
+		try:
+			reply_text = generate_response(history + [{"role": "user", "content": user_text}])
+		except Exception:
+			reply_text = "Namaste! Thodi der baad phir se koshish karte hain."
+		append_message(session, "assistant", reply_text)
+
+		# TTS
+		audio_path = await synthesize(reply_text)
+		return FileResponse(audio_path, media_type="audio/mpeg")
+	finally:
+		try:
+			os.remove(tmp_path)
+		except Exception:
+			pass
 
 

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Riverwood Voice Agent - Direct Web Voice</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px auto; max-width: 520px; color: #1f2933; }
+    h1 { font-size: 1.8rem; }
+    .center { display: flex; align-items: center; justify-content: center; }
+    .blob {
+      width: 140px; height: 140px; border-radius: 50%;
+      background: radial-gradient( circle at 30% 30%, #60a5fa, #1d4ed8 );
+      box-shadow: 0 10px 30px rgba(29,78,216,0.35);
+      transition: transform 0.2s ease;
+    }
+    .blob.listening { animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+    .controls { margin-top: 24px; display: flex; gap: 12px; justify-content: center; }
+    button {
+      padding: 12px 18px; border: none; border-radius: 8px; color: #fff; cursor: pointer;
+      background: #2563eb;
+    }
+    button.alt { background: #6b7280; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status { margin-top: 20px; padding: 12px; background: #f5f7fa; border-radius: 6px; min-height: 60px; white-space: pre-wrap; }
+    .row { margin-top: 14px; display: flex; gap: 10px; }
+    input, select { flex: 1; padding: 10px; border: 1px solid #cbd2d9; border-radius: 6px; }
+    audio { width: 100%; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Riverwood Voice Agent (Direct Web Voice)</h1>
+  <p>Click “Hold to Talk” to record a message. On release, your speech is transcribed, the agent replies, and audio plays back—no phone number required.</p>
+
+  <div class="center">
+    <div id="blob" class="blob"></div>
+  </div>
+
+  <div class="controls">
+    <button id="record-btn">Hold to Talk</button>
+    <button id="stop-btn" class="alt" disabled>Stop</button>
+  </div>
+
+  <div class="row">
+    <input id="session" placeholder="Session ID (auto)" />
+    <select id="lang">
+      <option value="hi">Hindi (hi)</option>
+      <option value="en">English (en)</option>
+    </select>
+  </div>
+
+  <div class="status" id="status">Idle.</div>
+  <audio id="player" controls></audio>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const blobEl = document.getElementById('blob');
+    const recBtn = document.getElementById('record-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const player = document.getElementById('player');
+    const sessionInput = document.getElementById('session');
+    const langSel = document.getElementById('lang');
+
+    let mediaRecorder = null;
+    let chunks = [];
+
+    function log(msg) { statusEl.textContent = msg; }
+
+    function ensureSession() {
+      let sid = sessionStorage.getItem('riverwood_session');
+      if (!sid) {
+        sid = 'web-' + Math.random().toString(16).slice(2);
+        sessionStorage.setItem('riverwood_session', sid);
+      }
+      sessionInput.value = sessionInput.value || sid;
+      return sessionInput.value;
+    }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        chunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          await sendForProcessing(blob);
+          stream.getTracks().forEach(t => t.stop());
+        };
+        mediaRecorder.start();
+        blobEl.classList.add('listening');
+        recBtn.disabled = true;
+        stopBtn.disabled = false;
+        log('Listening… release to process.');
+      } catch (err) {
+        log('Microphone error: ' + err.message);
+      }
+    }
+
+    async function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        blobEl.classList.remove('listening');
+        recBtn.disabled = false;
+        stopBtn.disabled = true;
+        log('Processing…');
+      }
+    }
+
+    async function sendForProcessing(blob) {
+      try {
+        const fd = new FormData();
+        fd.append('audio', blob, 'speech.webm');
+        fd.append('session', ensureSession());
+        fd.append('lang', langSel.value);
+        const resp = await fetch('/direct/stt-llm-tts', { method: 'POST', body: fd });
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => '');
+          log('Server error: ' + txt);
+          return;
+        }
+        const audioBlob = await resp.blob();
+        player.src = URL.createObjectURL(audioBlob);
+        player.play().catch(() => {});
+        log('Reply playing.');
+      } catch (err) {
+        log('Failed to process: ' + err.message);
+      }
+    }
+
+    recBtn.addEventListener('mousedown', startRecording);
+    recBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); }, { passive: false });
+
+    stopBtn.addEventListener('mouseup', stopRecording);
+    stopBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); }, { passive: false });
+  </script>
+</body>
+</html>
+
