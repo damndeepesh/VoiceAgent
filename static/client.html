@@ -105,6 +105,61 @@
       statusEl.textContent = message;
     }
 
+    async function registerDevice(token, identity) {
+      log('Initializing Twilio Device (Voice SDK v2)...');
+      device = new Twilio.Device(token, {
+        logLevel: 'info',
+        codecPreferences: ['opus', 'pcmu'],
+      });
+
+      device.on('registered', () => {
+        log(`Device registered as ${identity || 'browser client'}. Enter a number and click Call.`);
+        callBtn.disabled = false;
+      });
+      device.on('unregistered', () => {
+        log('Device unregistered. Refresh to obtain a new token.');
+        callBtn.disabled = true;
+        hangupBtn.disabled = true;
+      });
+      device.on('error', (error) => log(`Twilio Device error: ${error.message}`));
+      device.on('connect', (conn) => {
+        activeConnection = conn;
+        log(`Call connected with ${conn.parameters.To || phoneInput.value}`);
+        callBtn.disabled = true;
+        hangupBtn.disabled = false;
+      });
+      device.on('disconnect', () => {
+        activeConnection = null;
+        log('Call ended.');
+        callBtn.disabled = false;
+        hangupBtn.disabled = true;
+      });
+      device.on('tokenWillExpire', refreshToken);
+      device.on('tokenExpired', refreshToken);
+
+      try {
+        await device.register();
+      } catch (err) {
+        log(`Failed to register Twilio Device: ${err.message}`);
+      }
+    }
+
+    async function refreshToken() {
+      log('Refreshing Twilio token...');
+      try {
+        const identity = identityInput.value.trim() || undefined;
+        const response = await fetch(`/client-token${identity ? `?identity=${encodeURIComponent(identity)}` : ''}`);
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Token refresh failed.');
+        }
+        await device.updateToken(data.token);
+        log('Token refreshed.');
+      } catch (err) {
+        log(`Unable to refresh token: ${err.message}`);
+      }
+    }
+
     async function setupDevice() {
       try {
         const identity = identityInput.value.trim() || undefined;
@@ -114,23 +169,7 @@
           log(`Token error: ${tokenData.error || 'Unknown error'}`);
           return;
         }
-        log('Initializing Twilio Device...');
-        device = new Twilio.Device(tokenData.token, { debug: true });
-
-        device.on('ready', () => log('Device ready. Enter a number and click Call.'));
-        device.on('error', (error) => log(`Twilio Device error: ${error.message}`));
-        device.on('connect', (conn) => {
-          activeConnection = conn;
-          log(`Call connected with ${phoneInput.value}`);
-          callBtn.disabled = true;
-          hangupBtn.disabled = false;
-        });
-        device.on('disconnect', () => {
-          activeConnection = null;
-          log('Call ended.');
-          callBtn.disabled = false;
-          hangupBtn.disabled = true;
-        });
+        await registerDevice(tokenData.token, tokenData.identity);
       } catch (err) {
         log(`Failed to initialize Twilio Device: ${err.message}`);
       }
@@ -147,7 +186,13 @@
         return;
       }
       log(`Calling ${number}...`);
-      device.connect({ params: { To: number } });
+      try {
+        device.connect({
+          params: { To: number },
+        });
+      } catch (err) {
+        log(`Failed to start call: ${err.message}`);
+      }
     });
 
     hangupBtn.addEventListener('click', () => {
