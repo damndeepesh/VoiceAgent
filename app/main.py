@@ -337,6 +337,7 @@ async def direct_stream(ws: WebSocket):
 				if not all_text:
 					await ws.send_json({"type": "info", "message": "no_speech"})
 					continue
+				await ws.send_json({"type": "info", "message": "processing"})
 				# Build response with memory
 				history = load_history(session_id)
 				append_message(session_id, "user", all_text)

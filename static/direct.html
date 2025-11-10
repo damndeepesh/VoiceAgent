@@ -220,6 +220,12 @@
             if (msg.type === 'partial') {
               // Optionally show partials
               // log('Partial: ' + msg.text);
+            } else if (msg.type === 'info') {
+              if (msg.message === 'processing') {
+                log('Agent thinking…');
+              } else if (msg.message === 'no_speech') {
+                log('No speech detected.');
+              }
             } else if (msg.type === 'reply_audio_url') {
               player.src = msg.url;
               player.play().catch(()=>{});
@@ -245,7 +251,7 @@
             ws.send(JSON.stringify({ type: 'audio', b64 }));
           }
         };
-        rtRecorder.start(1000); // send ~1s chunks
+        rtRecorder.start(500); // send ~0.5s chunks for quicker partials
       } catch (err) {
         log('Realtime error: ' + err.message);
       }
@@ -253,7 +259,7 @@
     function flushRealtime() {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'flush' }));
-        log('Thinking…');
+        log('Agent thinking…');
       }
     }
     function stopRealtime() {
