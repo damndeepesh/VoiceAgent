@@ -254,8 +254,9 @@ async def direct_stt_llm_tts(
 		# Transcribe
 		# Note: faster-whisper supports multiple formats; webm/ogg should work if ffmpeg is available
 		user_text = ""
+		from .stt import transcribe_file  # local import to avoid circular import at module load
 		try:
-			user_text = transcribe_from_url(f"file://{tmp_path}", language=lang)
+			user_text = transcribe_file(tmp_path, language=lang)
 		except Exception:
 			user_text = ""
 

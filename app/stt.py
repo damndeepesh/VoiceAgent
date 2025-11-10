@@ -35,8 +35,7 @@ def download_file(url: str) -> str:
 	return path
 
 
-def transcribe_from_url(recording_url: str, language: Optional[str] = "hi") -> str:
-	local_path = download_file(recording_url)
+def transcribe_file(local_path: str, language: Optional[str] = "hi") -> str:
 	try:
 		model = _get_model()
 		segments, info = model.transcribe(local_path, language=language, beam_size=1)
@@ -47,5 +46,10 @@ def transcribe_from_url(recording_url: str, language: Optional[str] = "hi") -> s
 			os.remove(local_path)
 		except Exception:
 			pass
+
+
+def transcribe_from_url(recording_url: str, language: Optional[str] = "hi") -> str:
+	local_path = download_file(recording_url)
+	return transcribe_file(local_path, language=language)
 
 
