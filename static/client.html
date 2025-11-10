@@ -73,12 +73,10 @@
   <label for="identity">Identity (optional)</label>
   <input id="identity" type="text" placeholder="riverwood-demo-user" />
 
-  <label for="phone-number">Destination Number</label>
-  <input id="phone-number" type="tel" placeholder="+919876543210" />
-
   <div style="display:flex; justify-content:space-between;">
-    <button id="call-btn">Call</button>
-    <button id="hangup-btn" disabled>Hang Up</button>
+    <button id="call-btn">Connect</button>
+    <button id="mute-btn" disabled>Mute</button>
+    <button id="hangup-btn" disabled>Disconnect</button>
   </div>
 
   <div id="status">Loading Twilio Device...</div>
@@ -88,6 +86,9 @@
       Ensure your Twilio API Key/Secret and TwiML App SID are configured in Railway.<br />
       TwiML App Voice URL should point to <code>/client-voice</code>.
     </p>
+    <p>
+      This page works like a push-to-talk walkie talkie. Connect once, then toggle mute/unmute for hands-free conversation with the AI agent.
+    </p>
   </footer>
 
   <script src="/static/twilio.min.js"></script>
@@ -95,7 +96,6 @@
     const statusEl = document.getElementById('status');
     const callBtn = document.getElementById('call-btn');
     const hangupBtn = document.getElementById('hangup-btn');
-    const phoneInput = document.getElementById('phone-number');
     const identityInput = document.getElementById('identity');
 
     let device = null;
@@ -103,6 +103,13 @@
 
     function log(message) {
       statusEl.textContent = message;
+    }
+
+    function updateButtons(connected) {
+      callBtn.disabled = connected;
+      hangupBtn.disabled = !connected;
+      muteBtn.disabled = !connected;
+      muteBtn.textContent = activeConnection && activeConnection.isMuted() ? 'Unmute' : 'Mute';
     }
 
     async function registerDevice(token, identity) {
@@ -113,26 +120,26 @@
       });
 
       device.on('registered', () => {
-        log(`Device registered as ${identity || 'browser client'}. Enter a number and click Call.`);
+        log(`Device registered as ${identity || 'browser client'}. Click Connect to speak with the agent.`);
+        updateButtons(false);
         callBtn.disabled = false;
       });
       device.on('unregistered', () => {
         log('Device unregistered. Refresh to obtain a new token.');
         callBtn.disabled = true;
         hangupBtn.disabled = true;
+        muteBtn.disabled = true;
       });
       device.on('error', (error) => log(`Twilio Device error: ${error.message}`));
       device.on('connect', (conn) => {
         activeConnection = conn;
-        log(`Call connected with ${conn.parameters.To || phoneInput.value}`);
-        callBtn.disabled = true;
-        hangupBtn.disabled = false;
+        log('Connected to Riverwood voice agent.');
+        updateButtons(true);
       });
       device.on('disconnect', () => {
         activeConnection = null;
         log('Call ended.');
-        callBtn.disabled = false;
-        hangupBtn.disabled = true;
+        updateButtons(false);
       });
       device.on('tokenWillExpire', refreshToken);
       device.on('tokenExpired', refreshToken);
@@ -180,19 +187,22 @@
         log('Device not ready yet. Please wait.');
         return;
       }
-      const number = phoneInput.value.trim();
-      if (!number) {
-        log('Please enter a destination number in E.164 format.');
-        return;
-      }
-      log(`Calling ${number}...`);
+      log(`Connecting to Riverwood voice agent...`);
       try {
-        device.connect({
-          params: { To: number },
-        });
+        device.connect();
       } catch (err) {
         log(`Failed to start call: ${err.message}`);
       }
+    });
+
+    muteBtn.addEventListener('click', () => {
+      if (!activeConnection) {
+        return;
+      }
+      const currentlyMuted = activeConnection.isMuted();
+      activeConnection.mute(!currentlyMuted);
+      muteBtn.textContent = currentlyMuted ? 'Mute' : 'Unmute';
+      log(currentlyMuted ? 'Microphone unmuted.' : 'Microphone muted.');
     });
 
     hangupBtn.addEventListener('click', () => {
